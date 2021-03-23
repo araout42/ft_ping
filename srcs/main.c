@@ -52,10 +52,18 @@ static void		get_host(void)
 
 static void		set_sockopt(void)
 {
+	struct timeval timeout;
+	timeout.tv_sec = 10;
+	timeout.tv_usec = 0;
+
 	int opt = 1;
 	if (setsockopt(g_ping.sfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(int)) != 0)
 	opt = 64;
 	if (setsockopt(g_ping.sfd, IPPROTO_IP, IP_TTL, &opt, sizeof(int)) != 0)
+		err(ERR_SETSOCKOPT);
+	if (setsockopt (g_ping.sfd, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(timeout)) < 0)
+		err(ERR_SETSOCKOPT);
+	if (setsockopt (g_ping.sfd, SOL_SOCKET, SO_SNDTIMEO, (char *)&timeout, sizeof(timeout)) < 0)
 		err(ERR_SETSOCKOPT);
 }
 
@@ -84,7 +92,22 @@ static void		send_echo_req(int seq)
 	icmph->un.echo.sequence = (seq >> 8) | tmp;
 	icmph->checksum = checksum((uint16_t *)&g_ping.packet, sizeof(t_pack));
 	if ((g_ping.sent = sendto(g_ping.sfd, (void *)&(g_ping.packet), sizeof(g_ping.packet), 0, (struct sockaddr *)&(g_ping.h_addrinfo->ai_addr), g_ping.h_addrinfo->ai_addrlen)) <= 0)
-		err(ERR_SOCKET);
+		err(ERR_SENDTO);
+}
+
+static void		recv_echo_resp()
+{
+	struct iovec 	iov;
+	memset(&g_ping.recv_buf, 0, BUFSIZE);
+	memset(&g_ping.recv_msg, 0, sizeof(struct msghdr));
+	iov.iov_base = g_ping.recv_buf;
+	iov.iov_len = BUFSIZE;
+	g_ping.recv_msg.msg_name = g_ping.h_addrinfo->ai_addr;
+	g_ping.recv_msg.msg_namelen = g_ping.h_addrinfo->ai_addrlen;
+	g_ping.recv_msg.msg_iov = &iov;
+	g_ping.recv_msg.msg_iovlen = 1;
+	if ((g_ping.recv = recvmsg(g_ping.sfd, &g_ping.recv_msg, 0)) < 0)
+		err(ERR_RECVMSG);
 }
 
 static void		ping(void)
@@ -95,6 +118,7 @@ static void		ping(void)
 	{
 		seq++;
 		send_echo_req(seq);
+		recv_echo_resp(seq);
 	}
 }
 
@@ -164,7 +188,7 @@ void	err(int code)
 					printf("Permission to create a socket of the specified type and/or protocol is denied.\n");
 					break;
 				case EAFNOSUPPORT:
-					printf("The implementation does not support the specified address family.\n");
+					printf("Socket :The implementation does not support the specified address family.\n");
 					break;
 				case EINVAL:
 					printf("Unknown protocol, or protocol family not available or Invalid flags in type.\n");
@@ -172,13 +196,13 @@ void	err(int code)
 				case EMFILE:
 					printf("The per-process limit on the number of open file descriptors has been reached or The per-process limit on the number of open file escriptors has been reached.\n");
 					break;
-				case ENOBUFS || ENOMEM:
+				case ENOMEM:
 					printf("Insufficient memory is available. The socket cannot be created until sufficient resources are freed.\n");
 					break;
 				case EPROTONOSUPPORT:
 					printf("The protocol type or the specified protocol is not supported within this domain.\n");
 					break;
-				case EAGAIN || EWOULDBLOCK:
+			case EAGAIN:
 					printf("The socket is marked nonblocking and the requested operation would block\n");
 					break;
 				case EALREADY:
@@ -187,28 +211,11 @@ void	err(int code)
 				case EBADF:
 					printf("sockfd is not a valid open file descriptor.\n");
 					break;
-				case ECONNRESET:
-					printf("Connection reset by peer\n");
-					break;
-				case EDESTADDRREQ:
-					printf("The socket is not connection-mode, and no peer address is set.\n");
-					break;
 				case EFAULT:
 					printf("An invalid user space address was specified for an argument.\n");
 					break;
-				case EINTR:
-					printf("A signal occurred before any data was transmitted\n");
-					break;
-				case EISCONN:
-					printf("The connection-mode socket was connected already but a recipient was specified.\n");
-					break;
-				case EMSGSIZE:
-					printf("The socket type requires that message be sent atomically, and the size of the message to be sent made this impossible.\n");
-					break;
-
-
 			}
-		break;
+			break;
 		case ERR_SETSOCKOPT:
 			switch(errno)
 			{
@@ -226,6 +233,111 @@ void	err(int code)
 					break;
 				case ENOTSOCK:
 					printf("The argument sockfd is a file, not a socket.\n");
+					break;
+			}
+			break;
+		case ERR_SENDTO:
+			switch(errno)
+			{
+				case EAFNOSUPPORT:
+					printf("Addresses in the specified address family cannot be used with this socket.\n");
+					break;
+				case EIO:
+					printf("An I/O error occurred while reading from or writing to the file system.\n");
+					break;
+				case ELOOP:
+					printf("A loop exists in symbolic links encountered during resolution of the pathname in the socket address.\n");
+					break;
+				case ENAMETOOLONG:
+					printf("A component of a pathname exceeded {NAME_MAX} characters, or an entire pathname exceeded {PATH_MAX} characters.\n");
+					break;
+				case ENOENT:
+					printf("A component of the pathname does not name an existing file or the pathname is an empty string.\n");
+					break;
+				case ENOTDIR:
+					printf("A component of the path prefix of the pathname in the socket address is not a directory.");
+					break;
+				case EACCES:
+					printf("Write permission is denied on the destination socket file, or search permission is denied for one of the directories the path prefix.\n");
+					break;
+				case EAGAIN || EWOULDBLOCK:
+					printf("The socket is marked nonblocking and the requested operation would block\n");
+					break;
+				case EBADF:
+					printf("An invalid descriptor was specified.\n");
+					break;
+				case ECONNRESET:
+					printf("Connection reset by peer\n");
+					break;
+				case EDESTADDRREQ:
+					printf("The socket is not connection-mode, and no peer address is set.\n");
+					break;
+				case EFAULT:
+					printf("An invalid user space address was specified for an argument.\n");
+					break;
+				case EINTR:
+					printf("A signal occurred before any data was transmitted\n");
+					break;
+				case EINVAL:
+					printf("Invalid argument passed.\n");
+					break;
+				case EISCONN:
+					printf("The connection-mode socket was connected already but a recipient was specified.\n");
+					break;
+				case EMSGSIZE:
+					printf("The socket type requires that message be sent atomically, and the size of the message to be sent made this impossible.\n");
+					break;
+				case ENOBUFS:
+					printf("The output queue for a network interface was full.\n");
+					break;
+				case ENOMEM:
+					printf("No memory available.\n");
+					break;
+				case ENOTCONN:
+					printf("The socket is not connected, and no target has been given.\n");
+					break;
+				case ENOTSOCK:
+					printf("The argument sockfd is not a socket.\n");
+					break;
+				case EOPNOTSUPP:
+					printf("Some bit in the flags argument is inappropriate for the socket type.\n");
+					break;
+				case EPIPE:
+					printf("Some bit in the flags argument is inappropriate for the socket type.\n");
+					break;
+				default:
+					printf("Send Error unkown\n");
+			}
+			break;
+		case ERR_RECVMSG:
+			switch(errno)
+			{
+				case EAGAIN || EWOULDBLOCK:
+					printf("The socket is marked nonblocking and the receive operation would block, or a receive timeout had been set and the timeout expired before data was received\n");
+					break;
+				case EBADF:
+					printf("The argument sockfd is an invalid descriptor.\n");
+					break;
+				case ECONNREFUSED:
+					printf("A remote host refused to allow the network connection\n");
+					break;
+				case EFAULT:
+					printf("The receive buffer pointer(s) point outside the process's address space.\n");
+					break;
+				case EINTR:
+					printf("The receive was interrupted by delivery of a signal before any data were available.\n");
+					break;
+				case EINVAL:
+					printf("Invalid argument passed.\n");
+					break;
+				case ENOMEM:
+					printf("Could not allocate memory for recvmsg().\n");
+					break;
+				case ENOTCONN:
+					printf("The socket is associated with a connection-oriented protocol and has not been connected.\n");
+					break;
+				case ENOTSOCK:
+					printf("The argument sockfd does not refer to a socket.\n");
 					break;
 			}
 			break;

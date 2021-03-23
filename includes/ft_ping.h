@@ -17,9 +17,9 @@
 # define EAI_SOCKTYPE	12	/* ai_socktype not supported */
 # define EAI_SYSTEM		13	/* system error returned in errno */
 
-# define ERR_SETSOCKOPT 14
-
-
+# define ERR_SETSOCKOPT	14
+# define ERR_RECVMSG	15
+# define ERR_SENDTO		16
 
 # define OPT_V 1 << 0
 # define OPT_H 1 << 1
@@ -62,10 +62,12 @@ typedef struct		s_pack
 typedef struct		s_ping
 {
 	int				sfd;
-	size_t			sent;
-	size_t			len;
+	int				sent;
+	int				recv;
+	char			recv_buf[BUFSIZE];
 	t_env			env;
 	t_pack			packet;
+	struct msghdr	recv_msg;
 	struct addrinfo *h_addrinfo;
 
 } t_ping;
