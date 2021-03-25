@@ -48,14 +48,17 @@ typedef struct		s_env
 		unsigned int	opt;
 		char			host_str[64];
 		char			*arg;
-		struct timeval	t_start;
+		uint64_t		time;
+		uint64_t		delay;
+		int				lost;
+		int				ttl;
+		int				seq;
 		pid_t			pid;
 }	t_env;
 
 typedef struct		s_pack
 {
 	struct icmphdr	icmph;
-	char			data[53];
 }t_pack;
 
 

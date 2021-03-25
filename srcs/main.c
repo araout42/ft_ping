@@ -45,59 +45,85 @@ static void		get_host(void)
 	hints.ai_protocol = IPPROTO_ICMP;
 	hints.ai_flags = 0;
 	((i = getaddrinfo(g_ping.env.arg, NULL, &hints, &g_ping.h_addrinfo)) != 0) ? err(i) : 0;
-	ok = g_ping.h_addrinfo;
-	inet_ntop(ok->ai_family, (void *)&(((struct sockaddr_in*)(ok->ai_addr))->sin_addr), g_ping.env.host_str, 64);
-	printf("%s\n", g_ping.env.host_str);
+
+	for (ok = g_ping.h_addrinfo; ok != NULL; ok = ok->ai_next)
+	{
+		ok = g_ping.h_addrinfo;
+		inet_ntop(ok->ai_family, &(((struct sockaddr_in*)(ok->ai_addr))->sin_addr), g_ping.env.host_str, 64);
+		printf("%s\n", g_ping.env.host_str);
+		g_ping.sfd = socket(ok->ai_family, ok->ai_socktype, ok->ai_protocol);
+		if (g_ping.sfd >= 0)
+			break;
+	}
+	if (g_ping.sfd < 0)
+		err(ERR_SOCKET);
+
 }
 
 static void		set_sockopt(void)
 {
 	struct timeval timeout;
-	timeout.tv_sec = 10;
+	timeout.tv_sec = 1;
 	timeout.tv_usec = 0;
 
 	int opt = 1;
 	if (setsockopt(g_ping.sfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(int)) != 0)
-	opt = 64;
+	opt = 63;
 	if (setsockopt(g_ping.sfd, IPPROTO_IP, IP_TTL, &opt, sizeof(int)) != 0)
 		err(ERR_SETSOCKOPT);
-	if (setsockopt (g_ping.sfd, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(timeout)) < 0)
+	if (setsockopt (g_ping.sfd, SOL_SOCKET, SO_RCVTIMEO, (char*)&timeout, sizeof(timeout)) < 0)
 		err(ERR_SETSOCKOPT);
 	if (setsockopt (g_ping.sfd, SOL_SOCKET, SO_SNDTIMEO, (char *)&timeout, sizeof(timeout)) < 0)
 		err(ERR_SETSOCKOPT);
 }
 
-static void		init(void)
+
+static void		get_time(uint64_t *s)
 {
-	
-	g_ping.env.pid = getpid();
-	gettimeofday((struct timeval *)&(g_ping.env.t_start), NULL);
-	if ((g_ping.sfd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP)) < 0)
-		err(ERR_SOCKET);
-	set_sockopt();
-	get_host();
+	struct timeval	t_start;
+	if (s == NULL)
+	{
+		g_ping.env.time = ((gettimeofday((struct timeval *)&t_start, NULL)) != 0) ?
+				0 : t_start.tv_sec * 1000000 + t_start.tv_usec;
+	}
+
+	else
+	{
+		struct timeval t;
+		memset(&t, 0, sizeof(t));
+		*s = ((gettimeofday((struct timeval*)&t, NULL)) != 0) ? 0 : t.tv_sec * 1000000 + t.tv_usec;
+	}
+}
+
+static void		print_ping(int seq)
+{
+	printf("icmp_seq=%d ttl=%d time=%.3f ms\n", seq, g_ping.env.ttl, g_ping.env.delay/1000.0);
 }
 
 static void		send_echo_req(int seq)
 {
-	uint16_t		tmp;
 	struct icmphdr	*icmph;
 
 	memset((void*)&g_ping.packet, 0, sizeof(g_ping.packet));
 	icmph = &(g_ping.packet.icmph);
 	icmph->type = 8;
-	tmp = g_ping.env.pid;
-	icmph->un.echo.id = (g_ping.env.pid >> 8) |  tmp;
-	tmp = seq;
-	icmph->un.echo.sequence = (seq >> 8) | tmp;
+	icmph->un.echo.id = htons(g_ping.env.pid);
+	icmph->un.echo.sequence = htons(seq);
+
 	icmph->checksum = checksum((uint16_t *)&g_ping.packet, sizeof(t_pack));
-	if ((g_ping.sent = sendto(g_ping.sfd, (void *)&(g_ping.packet), sizeof(g_ping.packet), 0, (struct sockaddr *)&(g_ping.h_addrinfo->ai_addr), g_ping.h_addrinfo->ai_addrlen)) <= 0)
+	get_time(NULL);
+	if ((g_ping.sent = sendto(g_ping.sfd, (void *)&(g_ping.packet), sizeof(g_ping.packet), 0, (struct sockaddr *)(g_ping.h_addrinfo->ai_addr), g_ping.h_addrinfo->ai_addrlen)) <= 0)
 		err(ERR_SENDTO);
 }
 
 static void		recv_echo_resp()
 {
 	struct iovec 	iov;
+	uint64_t	tmp = 0;
+	
+	g_ping.recv = 0;
+	get_time(&tmp);
+	g_ping.env.delay = tmp - g_ping.env.time;
 	memset(&g_ping.recv_buf, 0, BUFSIZE);
 	memset(&g_ping.recv_msg, 0, sizeof(struct msghdr));
 	iov.iov_base = g_ping.recv_buf;
@@ -106,20 +132,40 @@ static void		recv_echo_resp()
 	g_ping.recv_msg.msg_namelen = g_ping.h_addrinfo->ai_addrlen;
 	g_ping.recv_msg.msg_iov = &iov;
 	g_ping.recv_msg.msg_iovlen = 1;
+	g_ping.recv = -1;
+	printf("OKOK\n");
 	if ((g_ping.recv = recvmsg(g_ping.sfd, &g_ping.recv_msg, 0)) < 0)
 		err(ERR_RECVMSG);
+	printf("OKOK\n");
+
 }
 
-static void		ping(void)
+static void		ping(int sig)
 {
-	int		seq = 0;
+	(void)sig;
+	g_ping.env.seq++;
+	send_echo_req(g_ping.env.seq);
+	alarm(1);
+}
 
-	while (1)
-	{
-		seq++;
-		send_echo_req(seq);
-		recv_echo_resp(seq);
-	}
+static void		print_end_ping(int sig)
+{
+	(void)sig;
+//	printf("--- %s --- ping statistics\n%d packets transmitted, %d received, %d lost,time %d ms", g_ping.env.host_str, g_ping.env.seq,)
+	exit(0);
+}
+
+static void		init(void)
+{
+	get_time(NULL);
+	signal(SIGALRM, ping);
+	signal(SIGINT, print_end_ping);
+	g_ping.env.pid = getpid();
+	g_ping.env.ttl = 63;
+	if ((g_ping.sfd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP)) <0)
+		err(ERR_SOCKET);
+	set_sockopt();
+	get_host();
 }
 
 int		main(int ac, char **av)
@@ -131,7 +177,12 @@ int		main(int ac, char **av)
 	memset(&g_ping, 0, sizeof(g_ping));
 	get_arg(ac, av);
 	init();
-	ping();
+	alarm(1);
+	while (1)
+	{
+		recv_echo_resp(g_ping.env.seq);
+		print_ping(g_ping.env.seq);
+	}
 	return(1);
 }
 
