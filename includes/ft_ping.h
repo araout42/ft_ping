@@ -49,8 +49,9 @@ typedef struct		s_env
 		char			host_str[64];
 		char			*arg;
 		uint64_t		time;
+		uint64_t		total_time;
 		uint64_t		delay;
-		int				lost;
+		int				recvd_nb;
 		int				ttl;
 		int				seq;
 		pid_t			pid;

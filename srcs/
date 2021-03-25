@@ -102,8 +102,8 @@ static void		send_echo_req(int seq)
 {
 	struct icmphdr	*icmph;
 
-//	if (seq == 1)
-//		get_time(&g_ping.env.total_time);
+	if (seq == 1)
+		get_time(&g_ping.env.total_time);
 	get_time(NULL);
 	memset((void*)&g_ping.packet, 0, sizeof(g_ping.packet));
 	icmph = &(g_ping.packet.icmph);
