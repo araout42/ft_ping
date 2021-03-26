@@ -38,6 +38,16 @@ static int		get_arg(int ac, char **av)
 			g_ping.env.opt |= OPT_V;
 		if (ft_strcmp(av[ac - i], "-h") == 0)
 			g_ping.env.opt |= OPT_H;
+		if ((ft_strcmp(av[ac - i], "-s") == 0))
+		{
+			
+			g_ping.env.opt |= OPT_S;
+			if (ac - (i + 1) >= ac)
+				err(ERR_OPTS);
+			g_ping.env.data_size = ft_atoi(av[ac - i + 1]);
+			if (g_ping.env.data_size <= 0)
+				err(ERR_OPTS);
+		}
 	}
 	return(1);
 }
@@ -85,9 +95,20 @@ static void		get_time(uint64_t *s)
 	}
 }
 
-static void		print_ping(int seq)
+static void		print_ping(void)
 {
-	printf("icmp_seq=%d ttl=%d time=%.2f ms\n", seq, g_ping.env.ttl, g_ping.env.delay/1000.0);
+	printf("icmp_seq=%d ttl=%d time=%.1f ms\n", g_ping.env.seq, g_ping.env.ttl, g_ping.env.delay/10.0);
+}
+
+void			fill_data(char **s)
+{
+	int i = g_ping.env.data_size;
+
+	i = i-1;
+	while (--i > 0)
+	{
+		(*s)[i] = ('A' + i) % 26;
+	}
 }
 
 static void		send_echo_req(int seq)
@@ -99,9 +120,8 @@ static void		send_echo_req(int seq)
 	icmph->type = 8;
 	icmph->un.echo.id = htons(g_ping.env.pid);
 	icmph->un.echo.sequence = htons(seq);
-
 	icmph->checksum = checksum((uint16_t *)&g_ping.packet, sizeof(t_pack));
-	if ((g_ping.sent = sendto(g_ping.sfd, (void *)&(g_ping.packet), sizeof(g_ping.packet), 0, (struct sockaddr *)(g_ping.h_addrinfo->ai_addr), g_ping.h_addrinfo->ai_addrlen)) <= 0)
+	if ((g_ping.sent = sendto(g_ping.sfd, (void *)&(g_ping.packet), sizeof(g_ping.packet), 0, (g_ping.h_addrinfo->ai_addr), g_ping.h_addrinfo->ai_addrlen)) <= 0)
 		err(ERR_SENDTO);
 	get_time(NULL);
 }
@@ -109,8 +129,10 @@ static void		send_echo_req(int seq)
 static void		recv_echo_resp()
 {
 	struct iovec 	iov;
-	uint64_t	tmp = 0;
-	
+	uint64_t		tmp = 0;
+	uint8_t			type = -1;
+	uint8_t			code = -1;
+
 	g_ping.recv = 0;
 	memset(&g_ping.recv_buf, 0, BUFSIZE);
 	memset(&g_ping.recv_msg, 0, sizeof(struct msghdr));
@@ -123,9 +145,164 @@ static void		recv_echo_resp()
 	if ((g_ping.recv = recvmsg(g_ping.sfd, &g_ping.recv_msg, 0)) < 0)
 		err(ERR_RECVMSG);
 	get_time(&tmp);
-	g_ping.env.delay = tmp - g_ping.env.time;
-	g_ping.env.recvd_nb++;
-	print_ping(g_ping.env.seq);
+	if (g_ping.recv > 0)
+	{
+		type =  htons((uint8_t)(g_ping.recv_buf)[0]);
+		code =  htons((uint8_t)(g_ping.recv_buf)[8]);
+		if (g_ping.env.opt & OPT_V)
+		{
+			switch (type)
+			{
+				case 0:
+					g_ping.env.delay = tmp - g_ping.env.time;
+					g_ping.env.recvd_nb++;
+					print_ping();
+					break;
+				case 3:
+					switch (code)
+					{
+						case 0:
+							printf("Destination network unreachable\n");
+							break;
+						case 1:
+							printf("Destination host unreachable\n");
+							break;
+						case 2:
+							printf("Destination host unreachable\n");
+							break;
+						case 3:
+							printf("Source host isolated\n");
+							break;
+						case 4:
+							printf("Network administratively prohibited\n");
+							break;
+						case 5:
+							printf("Host administratively prohibited\n");
+							break;
+						case 6:
+							printf("Network unreachable for ToS\n");
+							break;
+						case 7:
+							printf("Destination host unknown\n");
+							break;
+						case 8:
+							printf("Source host isolated\n");
+							break;
+						case 9:
+							printf("Network administratively prohibited \n");
+							break;
+						case 10:
+							printf("Host administratively prohibited \n");
+							break;
+						case 11:
+							printf("Network unreachable for ToS\n");
+							break;
+						case 12:
+							printf("Host unreachable for ToS\n");
+							break;
+						case 13:
+							printf("Communication administratively prohibited\n");
+							break;
+						case 14:
+							printf("Host Precedence Violation\n");
+							break;
+						case 15:
+							printf("Precedence cutoff in effect \n");
+							break;
+					}
+					break;
+					case 5:
+						switch(code)
+						{
+						case 0:
+							printf("Redirect Datagram for the Network \n");
+							break;
+						case 1:
+							printf("Redirect Datagram for the Host \n");
+							break;
+						case 2:
+							printf("Redirect Datagram for the ToS & network \n");
+							break;
+						case 3:
+							printf("Redirect Datagram for the ToS & host \n");
+							break;
+					}
+					break;
+				case 9:
+					printf("Router Advertisement \n");
+					break;
+				case 10:
+					printf("Router discovery/selection/solicitation\n");
+					break;
+				case 11:
+					switch(code)
+						{
+						case 0:
+							printf("TTL expired in transit\n");
+						break;
+						case 1:
+							printf("Fragment reassembly time exceeded\n");
+							break;
+					}
+					break;
+				case 12:
+					switch(code)
+					{
+						case 0:
+							printf("Pointer indicates the error \n");
+							break;
+						case 1:
+							printf("Missing a required option \n");
+							break;
+						case 2:
+							printf("Bad length \n");
+							break;
+					}
+					break;
+				case 13:
+					printf("Timestamp\n");
+					break;
+				case 14:
+					printf("Timestamp reply\n");
+					break;
+				case 40:
+					printf("Photuris, Security failures \n");
+					break;
+				case 41:
+					printf("ICMP for experimental mobility protocols\n");
+					break;
+				case 42:
+					printf("Request Extended Echo\n");
+					break;
+				case 43:
+					switch(code)
+					{
+						case 0:
+							printf("No Error \n");
+							break;
+						case 1:
+							printf("Malformed Query \n");
+							break;
+						case 2:
+							printf("No Such Interface \n");
+							break;
+						case 3:
+							printf("No Such Table Entry \n");
+							break;
+						case 4:
+							printf("Multiple Interfaces Satisfy Query \n");
+							break;
+					}
+					break;
+			}
+		}
+		else if (type == 0)
+		{
+			g_ping.env.delay = tmp - g_ping.env.time;
+			g_ping.env.recvd_nb++;
+			print_ping();
+		}
+	}
 }
 
 static void		ping(int sig)
@@ -134,6 +311,8 @@ static void		ping(int sig)
 	alarm(1);
 	g_ping.env.seq++;
 	send_echo_req(g_ping.env.seq);
+	if (sig == 1)
+		printf("PING %s (%s) %d data bytes\n", g_ping.env.arg, g_ping.env.host_str, g_ping.env.data_size);
 }
 
 static void		print_end_ping(int sig)
@@ -141,7 +320,7 @@ static void		print_end_ping(int sig)
 	(void)sig;
 	get_time(&g_ping.env.time);
 	g_ping.env.total_time = g_ping.env.time - g_ping.env.total_time;
-	printf("--- %s --- ping statistics\n%d packets transmitted, %d received, %d lost, time %d ms\n", g_ping.env.host_str, g_ping.env.seq, g_ping.env.recvd_nb, g_ping.env.seq - g_ping.env.recvd_nb, (int)g_ping.env.total_time / 1000);
+	printf("--- %s ping statistics ---\n%d packets transmitted, %d received, %d lost, time %d ms\n", g_ping.env.arg, g_ping.env.seq, g_ping.env.recvd_nb, g_ping.env.seq - g_ping.env.recvd_nb, (int)g_ping.env.total_time / 1000);
 	exit(0);
 }
 
@@ -375,6 +554,9 @@ void	err(int code)
 					printf("The argument sockfd does not refer to a socket.\n");
 					break;
 			}
+			break;
+		case ERR_OPTS:
+			printf("Oops option S specified, it must be an Integer superior to zero\n");
 			break;
 		default :
 			printf("Error...");

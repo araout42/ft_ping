@@ -20,9 +20,11 @@
 # define ERR_SETSOCKOPT	14
 # define ERR_RECVMSG	15
 # define ERR_SENDTO		16
+# define ERR_OPTS		17
 
 # define OPT_V 1 << 0
 # define OPT_H 1 << 1
+# define OPT_S 1 << 2
 
 # define ROOT 0
 
@@ -43,6 +45,7 @@
 # include <netdb.h>
 # include <errno.h>
 
+
 typedef struct		s_env
 {
 		unsigned int	opt;
@@ -54,15 +57,15 @@ typedef struct		s_env
 		int				recvd_nb;
 		int				ttl;
 		int				seq;
+		int				data_size;
 		pid_t			pid;
 }	t_env;
 
 typedef struct		s_pack
 {
 	struct icmphdr	icmph;
-	char *data[56];
+	char			*data;
 }t_pack;
-
 
 typedef struct		s_ping
 {
