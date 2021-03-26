@@ -60,6 +60,7 @@ typedef struct		s_env
 typedef struct		s_pack
 {
 	struct icmphdr	icmph;
+	char *data[56];
 }t_pack;
 
 

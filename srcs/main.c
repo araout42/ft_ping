@@ -20,19 +20,11 @@ uint16_t	checksum(uint16_t *buffer, uint32_t size)
 
 static void		set_sockopt(void)
 {
-//	struct timeval timeout;
-//	timeout.tv_sec = 0;
-//	timeout.tv_usec = 500;
-
 	int opt = 1;
 	if (setsockopt(g_ping.sfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(int)) != 0)
 	opt = 63;
 	if (setsockopt(g_ping.sfd, IPPROTO_IP, IP_TTL, &opt, sizeof(int)) != 0)
 		err(ERR_SETSOCKOPT);
-//	if (setsockopt (g_ping.sfd, SOL_SOCKET, SO_RCVTIMEO, (const void *)&timeout, (socklen_t)sizeof(timeout)) < 0)
-//		err(ERR_SETSOCKOPT);
-//	if (setsockopt (g_ping.sfd, SOL_SOCKET, SO_SNDTIMEO, (const void  *)&timeout, sizeof(timeout)) < 0)
-//		err(ERR_SETSOCKOPT);
 }
 
 static int		get_arg(int ac, char **av)
@@ -102,9 +94,6 @@ static void		send_echo_req(int seq)
 {
 	struct icmphdr	*icmph;
 
-//	if (seq == 1)
-//		get_time(&g_ping.env.total_time);
-	get_time(NULL);
 	memset((void*)&g_ping.packet, 0, sizeof(g_ping.packet));
 	icmph = &(g_ping.packet.icmph);
 	icmph->type = 8;
@@ -114,6 +103,7 @@ static void		send_echo_req(int seq)
 	icmph->checksum = checksum((uint16_t *)&g_ping.packet, sizeof(t_pack));
 	if ((g_ping.sent = sendto(g_ping.sfd, (void *)&(g_ping.packet), sizeof(g_ping.packet), 0, (struct sockaddr *)(g_ping.h_addrinfo->ai_addr), g_ping.h_addrinfo->ai_addrlen)) <= 0)
 		err(ERR_SENDTO);
+	get_time(NULL);
 }
 
 static void		recv_echo_resp()
@@ -135,34 +125,32 @@ static void		recv_echo_resp()
 	get_time(&tmp);
 	g_ping.env.delay = tmp - g_ping.env.time;
 	g_ping.env.recvd_nb++;
+	print_ping(g_ping.env.seq);
 }
 
 static void		ping(int sig)
 {
 	(void)sig;
+	alarm(1);
 	g_ping.env.seq++;
 	send_echo_req(g_ping.env.seq);
-	if(sig!=1)
-		g_ping.env.total_time += g_ping.env.delay+1000000;
-	alarm(1);
 }
 
 static void		print_end_ping(int sig)
 {
 	(void)sig;
+	get_time(&g_ping.env.time);
+	g_ping.env.total_time = g_ping.env.time - g_ping.env.total_time;
 	printf("--- %s --- ping statistics\n%d packets transmitted, %d received, %d lost, time %d ms\n", g_ping.env.host_str, g_ping.env.seq, g_ping.env.recvd_nb, g_ping.env.seq - g_ping.env.recvd_nb, (int)g_ping.env.total_time / 1000);
 	exit(0);
 }
 
 static void		init(void)
 {
-	get_time(NULL);
 	signal(SIGALRM, ping);
 	signal(SIGINT, print_end_ping);
 	g_ping.env.pid = getpid();
-	g_ping.env.ttl = 63;
-	if ((g_ping.sfd = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP)) <0)
-		err(ERR_SOCKET);
+	g_ping.env.ttl = 113;
 	get_host();
 }
 
@@ -173,14 +161,12 @@ int		main(int ac, char **av)
 	if (getuid())
 		err(ERR_PERM);
 	memset(&g_ping, 0, sizeof(g_ping));
+	get_time(&g_ping.env.total_time);
 	get_arg(ac, av);
 	init();
 	ping(1);
 	while (1)
-	{
 		recv_echo_resp(g_ping.env.seq);
-		print_ping(g_ping.env.seq);
-	}
 	return(1);
 }
 
