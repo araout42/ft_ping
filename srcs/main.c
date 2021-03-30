@@ -22,6 +22,7 @@ static void		set_sockopt(void)
 {
 	int opt = 1;
 	if (setsockopt(g_ping.sfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(int)) != 0)
+		err(ERR_SETSOCKOPT);
 	opt = 63;
 	if (setsockopt(g_ping.sfd, IPPROTO_IP, IP_TTL, &opt, sizeof(int)) != 0)
 		err(ERR_SETSOCKOPT);
