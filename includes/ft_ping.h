@@ -21,14 +21,39 @@
 # define ERR_RECVMSG	15
 # define ERR_SENDTO		16
 # define ERR_OPTS		17
+# define ERR_OPTT		18
 
-# define OPT_V 1 << 0
-# define OPT_H 1 << 1
-# define OPT_S 1 << 2
+# define ERR_MALLOC		19
+
+# define OPT_V (1 << 0)
+# define OPT_H (1 << 1)
+# define OPT_S (1 << 2)
+# define OPT_T (1 << 3)
 
 # define ROOT 0
 
-#define BUFSIZE 1024
+# define BUFSIZE 1024
+# define PACKETSIZE 64
+
+#define HTONS(n) (((((unsigned short)(n) & 0xFF)) << 8) | (((unsigned short)(n) & 0xFF00) >> 8))
+#define NTOHS(n) (((((unsigned short)(n) & 0xFF)) << 8) | (((unsigned short)(n) & 0xFF00) >> 8))
+
+#define HTONL(n) (((((unsigned long)(n) & 0xFF)) << 24) | \
+                  ((((unsigned long)(n) & 0xFF00)) << 8) | \
+                  ((((unsigned long)(n) & 0xFF0000)) >> 8) | \
+                  ((((unsigned long)(n) & 0xFF000000)) >> 24))
+
+#define NTOHL(n) (((((unsigned long)(n) & 0xFF)) << 24) | \
+                  ((((unsigned long)(n) & 0xFF00)) << 8) | \
+                  ((((unsigned long)(n) & 0xFF0000)) >> 8) | \
+                  ((((unsigned long)(n) & 0xFF000000)) >> 24))
+
+#define NTOHL(n) (((((unsigned long)(n) & 0xFF)) << 24) | \
+                  ((((unsigned long)(n) & 0xFF00)) << 8) | \
+                  ((((unsigned long)(n) & 0xFF0000)) >> 8) | \
+                  ((((unsigned long)(n) & 0xFF000000)) >> 24))
+
+
 
 # include <stdio.h>
 # include <signal.h>
@@ -64,7 +89,7 @@ typedef struct		s_env
 typedef struct		s_pack
 {
 	struct icmphdr	icmph;
-	char			*data;
+	char			data[2048];
 }t_pack;
 
 typedef struct		s_ping

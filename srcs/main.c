@@ -20,18 +20,23 @@ uint16_t	checksum(uint16_t *buffer, uint32_t size)
 
 static void		set_sockopt(void)
 {
+	struct timeval timeout;
 	int opt = 1;
+	
+	timeout.tv_sec = 1;
+	timeout.tv_usec = 0;
 	if (setsockopt(g_ping.sfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(int)) != 0)
 		err(ERR_SETSOCKOPT);
-	opt = 63;
-	if (setsockopt(g_ping.sfd, IPPROTO_IP, IP_TTL, &opt, sizeof(int)) != 0)
+	if (setsockopt(g_ping.sfd, IPPROTO_IP, IP_TTL, &(g_ping.env.ttl), sizeof(int)) != 0)
+		err(ERR_SETSOCKOPT);
+	if (setsockopt(g_ping.sfd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0)
 		err(ERR_SETSOCKOPT);
 }
 
 static int		get_arg(int ac, char **av)
 {
-	int		i = 1;
-	g_ping.env.arg = av[ac - i];
+	int		i = 0;
+	g_ping.env.arg = av[ac - 1];
 
 	while (++i < ac)
 	{
@@ -41,15 +46,25 @@ static int		get_arg(int ac, char **av)
 			g_ping.env.opt |= OPT_H;
 		if ((ft_strcmp(av[ac - i], "-s") == 0))
 		{
-			
 			g_ping.env.opt |= OPT_S;
 			if (ac - (i + 1) >= ac)
 				err(ERR_OPTS);
 			g_ping.env.data_size = ft_atoi(av[ac - i + 1]);
-			if (g_ping.env.data_size <= 0)
+			if (g_ping.env.data_size < 0 || g_ping.env.data_size > 1472)
 				err(ERR_OPTS);
 		}
+		if (ft_strcmp(av[ac - i ], "-t") == 0)
+		{
+			g_ping.env.opt |= OPT_T;
+			if (ac - (i + 1) >= ac)
+				err(ERR_OPTS);
+			g_ping.env.ttl = ft_atoi(av[ac - i + 1]);
+			if (g_ping.env.ttl <= 0 || g_ping.env.ttl > 255)
+				err(ERR_OPTT);
+		}
 	}
+	if (!(g_ping.env.opt & OPT_S))
+		g_ping.env.data_size = 56;
 	return(1);
 }
 
@@ -87,7 +102,6 @@ static void		get_time(uint64_t *s)
 		g_ping.env.time = ((gettimeofday((struct timeval *)&t_start, NULL)) != 0) ?
 				0 : t_start.tv_sec * 1000000 + t_start.tv_usec;
 	}
-
 	else
 	{
 		struct timeval t;
@@ -98,31 +112,33 @@ static void		get_time(uint64_t *s)
 
 static void		print_ping(void)
 {
-	printf("icmp_seq=%d ttl=%d time=%.1f ms\n", g_ping.env.seq, g_ping.env.ttl, g_ping.env.delay/10.0);
+	printf("%u bytes from %s: icmp_seq=%d ttl=%d time=%.1f ms\n", g_ping.recv - 20, g_ping.env.host_str, g_ping.env.seq, g_ping.env.ttl, g_ping.env.delay/1000.0);
 }
 
 void			fill_data(char **s)
 {
-	int i = g_ping.env.data_size;
+	int i = -1;
 
-	i = i-1;
-	while (--i > 0)
+	while (++i < g_ping.env.data_size)
 	{
-		(*s)[i] = ('A' + i) % 26;
+		(*s)[i] = ('A' + (i % 26));
 	}
 }
 
 static void		send_echo_req(int seq)
 {
 	struct icmphdr	*icmph;
+	int				i = -1;
 
-	memset((void*)&g_ping.packet, 0, sizeof(g_ping.packet));
+	ft_memset((void*)&g_ping.packet, 0, sizeof(g_ping.packet));
 	icmph = &(g_ping.packet.icmph);
 	icmph->type = 8;
-	icmph->un.echo.id = htons(g_ping.env.pid);
-	icmph->un.echo.sequence = htons(seq);
+	icmph->un.echo.id = HTONS(g_ping.env.pid);
+	icmph->un.echo.sequence = HTONS(seq);
+	while (++i < g_ping.env.data_size)
+		g_ping.packet.data[i] = ('A' + (i % 26));
 	icmph->checksum = checksum((uint16_t *)&g_ping.packet, sizeof(t_pack));
-	if ((g_ping.sent = sendto(g_ping.sfd, (void *)&(g_ping.packet), sizeof(g_ping.packet), 0, (g_ping.h_addrinfo->ai_addr), g_ping.h_addrinfo->ai_addrlen)) <= 0)
+	if ((g_ping.sent = sendto(g_ping.sfd, (void *)&(g_ping.packet), sizeof(struct icmphdr) + g_ping.env.data_size, 0, (g_ping.h_addrinfo->ai_addr), g_ping.h_addrinfo->ai_addrlen)) <= 0)
 		err(ERR_SENDTO);
 	get_time(NULL);
 }
@@ -143,166 +159,168 @@ static void		recv_echo_resp()
 	g_ping.recv_msg.msg_namelen = g_ping.h_addrinfo->ai_addrlen;
 	g_ping.recv_msg.msg_iov = &iov;
 	g_ping.recv_msg.msg_iovlen = 1;
-	if ((g_ping.recv = recvmsg(g_ping.sfd, &g_ping.recv_msg, 0)) < 0)
+	if (((g_ping.recv = recvmsg(g_ping.sfd, &g_ping.recv_msg, 0)) <= 0) && errno != EAGAIN && errno != EINTR)
 		err(ERR_RECVMSG);
 	get_time(&tmp);
-	if (g_ping.recv > 0)
+	g_ping.env.delay = tmp - g_ping.env.time;
+	if (g_ping.recv > 0 && g_ping.env.opt & OPT_V)
 	{
-		type =  htons((uint8_t)(g_ping.recv_buf)[0]);
-		code =  htons((uint8_t)(g_ping.recv_buf)[8]);
-		if (g_ping.env.opt & OPT_V)
+		type =  NTOHS((uint8_t)(g_ping.recv_buf)[0]);
+		code =  NTOHS((uint8_t)(g_ping.recv_buf)[8]);
+		switch (type)
 		{
-			switch (type)
-			{
-				case 0:
-					g_ping.env.delay = tmp - g_ping.env.time;
-					g_ping.env.recvd_nb++;
-					print_ping();
-					break;
-				case 3:
-					switch (code)
-					{
-						case 0:
-							printf("Destination network unreachable\n");
-							break;
-						case 1:
-							printf("Destination host unreachable\n");
-							break;
-						case 2:
-							printf("Destination host unreachable\n");
-							break;
-						case 3:
-							printf("Source host isolated\n");
-							break;
-						case 4:
-							printf("Network administratively prohibited\n");
-							break;
-						case 5:
-							printf("Host administratively prohibited\n");
-							break;
-						case 6:
-							printf("Network unreachable for ToS\n");
-							break;
-						case 7:
-							printf("Destination host unknown\n");
-							break;
-						case 8:
-							printf("Source host isolated\n");
-							break;
-						case 9:
-							printf("Network administratively prohibited \n");
-							break;
-						case 10:
-							printf("Host administratively prohibited \n");
-							break;
-						case 11:
-							printf("Network unreachable for ToS\n");
-							break;
-						case 12:
-							printf("Host unreachable for ToS\n");
-							break;
-						case 13:
-							printf("Communication administratively prohibited\n");
-							break;
-						case 14:
-							printf("Host Precedence Violation\n");
-							break;
-						case 15:
-							printf("Precedence cutoff in effect \n");
-							break;
-					}
-					break;
-					case 5:
-						switch(code)
-						{
-						case 0:
-							printf("Redirect Datagram for the Network \n");
-							break;
-						case 1:
-							printf("Redirect Datagram for the Host \n");
-							break;
-						case 2:
-							printf("Redirect Datagram for the ToS & network \n");
-							break;
-						case 3:
-							printf("Redirect Datagram for the ToS & host \n");
-							break;
-					}
-					break;
-				case 9:
-					printf("Router Advertisement \n");
-					break;
-				case 10:
-					printf("Router discovery/selection/solicitation\n");
-					break;
-				case 11:
-					switch(code)
-						{
-						case 0:
-							printf("TTL expired in transit\n");
+			case 0:
+				g_ping.env.recvd_nb++;
+				print_ping();
+				break;
+			case 3:
+				switch (code)
+				{
+					case 0:
+						printf("Destination network unreachable\n");
 						break;
-						case 1:
-							printf("Fragment reassembly time exceeded\n");
+					case 1:
+						printf("Destination host unreachable\n");
+						break;
+					case 2:
+						printf("Destination host unreachable\n");
 							break;
-					}
-					break;
-				case 12:
+					case 3:
+						printf("Source host isolated\n");
+						break;
+					case 4:
+						printf("Network administratively prohibited\n");
+						break;
+					case 5:
+						printf("Host administratively prohibited\n");
+						break;
+					case 6:
+						printf("Network unreachable for ToS\n");
+						break;
+					case 7:
+						printf("Destination host unknown\n");
+						break;
+					case 8:
+						printf("Source host isolated\n");
+						break;
+					case 9:
+						printf("Network administratively prohibited \n");
+						break;
+					case 10:
+						printf("Host administratively prohibited \n");
+						break;
+					case 11:
+						printf("Network unreachable for ToS\n");
+						break;
+					case 12:
+						printf("Host unreachable for ToS\n");
+						break;
+					case 13:
+						printf("Communication administratively prohibited\n");
+						break;
+					case 14:
+						printf("Host Precedence Violation\n");
+						break;
+					case 15:
+						printf("Precedence cutoff in effect \n");
+						break;
+				}
+				break;
+				case 5:
 					switch(code)
 					{
-						case 0:
-							printf("Pointer indicates the error \n");
-							break;
-						case 1:
-							printf("Missing a required option \n");
-							break;
-						case 2:
-							printf("Bad length \n");
-							break;
-					}
-					break;
-				case 13:
-					printf("Timestamp\n");
-					break;
-				case 14:
-					printf("Timestamp reply\n");
-					break;
-				case 40:
-					printf("Photuris, Security failures \n");
-					break;
-				case 41:
-					printf("ICMP for experimental mobility protocols\n");
-					break;
-				case 42:
-					printf("Request Extended Echo\n");
-					break;
-				case 43:
-					switch(code)
+					case 0:
+						printf("Redirect Datagram for the Network \n");
+						break;
+					case 1:
+						printf("Redirect Datagram for the Host \n");
+						break;
+					case 2:
+						printf("Redirect Datagram for the ToS & network \n");
+						break;
+					case 3:
+						printf("Redirect Datagram for the ToS & host \n");
+						break;
+				}
+				break;
+			case 9:
+				printf("Router Advertisement \n");
+				break;
+			case 10:
+				printf("Router discovery/selection/solicitation\n");
+				break;
+			case 11:
+				switch(code)
 					{
-						case 0:
-							printf("No Error \n");
-							break;
-						case 1:
-							printf("Malformed Query \n");
-							break;
-						case 2:
-							printf("No Such Interface \n");
-							break;
-						case 3:
-							printf("No Such Table Entry \n");
-							break;
-						case 4:
-							printf("Multiple Interfaces Satisfy Query \n");
-							break;
-					}
+					case 0:
+						printf("TTL expired in transit\n");
 					break;
-			}
+					case 1:
+						printf("Fragment reassembly time exceeded\n");
+						break;
+				}
+				break;
+			case 12:
+				switch(code)
+				{
+					case 0:
+						printf("Pointer indicates the error \n");
+						break;
+					case 1:
+						printf("Missing a required option \n");
+						break;
+					case 2:
+						printf("Bad length \n");
+						break;
+				}
+				break;
+			case 13:
+				printf("Timestamp\n");
+				break;
+			case 14:
+				printf("Timestamp reply\n");
+				break;
+			case 40:
+				printf("Photuris, Security failures \n");
+				break;
+			case 41:
+				printf("ICMP for experimental mobility protocols\n");
+				break;
+			case 42:
+				printf("Request Extended Echo\n");
+				break;
+			case 43:
+				switch(code)
+				{
+					case 0:
+						printf("No Error \n");
+						break;
+					case 1:
+						printf("Malformed Query \n");
+						break;
+					case 2:
+						printf("No Such Interface \n");
+						break;
+					case 3:
+						printf("No Such Table Entry \n");
+						break;
+					case 4:
+						printf("Multiple Interfaces Satisfy Query \n");
+						break;
+				}
+				break;
+			default:
+				printf("\n");
 		}
-		else if (type == 0)
-		{
-			g_ping.env.delay = tmp - g_ping.env.time;
-			g_ping.env.recvd_nb++;
-			print_ping();
-		}
+	}
+	else if (g_ping.recv < 0 && g_ping.env.opt & OPT_V && errno != EINTR)
+	{
+		printf("Receive request timeout\n");
+	}
+	else if (g_ping.recv > 0 && !(g_ping.env.opt & OPT_V))
+	{
+		g_ping.env.recvd_nb++;
+		print_ping();
 	}
 }
 
@@ -314,13 +332,14 @@ static void		ping(int sig)
 	send_echo_req(g_ping.env.seq);
 	if (sig == 1)
 		printf("PING %s (%s) %d data bytes\n", g_ping.env.arg, g_ping.env.host_str, g_ping.env.data_size);
+	else 
+		g_ping.env.total_time += g_ping.env.delay+1000000;
 }
 
 static void		print_end_ping(int sig)
 {
 	(void)sig;
-	get_time(&g_ping.env.time);
-	g_ping.env.total_time = g_ping.env.time - g_ping.env.total_time;
+	g_ping.env.total_time += g_ping.env.delay;
 	printf("--- %s ping statistics ---\n%d packets transmitted, %d received, %d lost, time %d ms\n", g_ping.env.arg, g_ping.env.seq, g_ping.env.recvd_nb, g_ping.env.seq - g_ping.env.recvd_nb, (int)g_ping.env.total_time / 1000);
 	exit(0);
 }
@@ -330,8 +349,15 @@ static void		init(void)
 	signal(SIGALRM, ping);
 	signal(SIGINT, print_end_ping);
 	g_ping.env.pid = getpid();
-	g_ping.env.ttl = 113;
+	if (!(g_ping.env.opt & OPT_T))
+		g_ping.env.ttl = 113;
 	get_host();
+}
+
+void	print_help(void)
+{
+	printf("PING : usage : ft_ping [hvst] host\n");
+	exit(0);
 }
 
 int		main(int ac, char **av)
@@ -341,8 +367,9 @@ int		main(int ac, char **av)
 	if (getuid())
 		err(ERR_PERM);
 	memset(&g_ping, 0, sizeof(g_ping));
-	get_time(&g_ping.env.total_time);
 	get_arg(ac, av);
+	if (g_ping.env.opt & OPT_H)
+		print_help();
 	init();
 	ping(1);
 	while (1)
@@ -527,7 +554,7 @@ void	err(int code)
 		case ERR_RECVMSG:
 			switch(errno)
 			{
-				case EAGAIN || EWOULDBLOCK:
+				case EAGAIN:
 					printf("The socket is marked nonblocking and the receive operation would block, or a receive timeout had been set and the timeout expired before data was received\n");
 					break;
 				case EBADF:
@@ -557,7 +584,13 @@ void	err(int code)
 			}
 			break;
 		case ERR_OPTS:
-			printf("Oops option S specified, it must be an Integer superior to zero\n");
+			printf("Oops option 's' or option 't' specified, it must be an Integer between zero and 1472\n");
+			break;
+		case ERR_OPTT:
+			printf("Ooops options 't' specified, it must be an Integer between 1  and 255\n");
+			break;
+		case ERR_MALLOC:
+			printf("Error Malloc.\n");
 			break;
 		default :
 			printf("Error...");
